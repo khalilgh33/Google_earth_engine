@@ -1,0 +1,111 @@
+// Center the map to the study area
+Map.centerObject(study_area, 10);
+
+/// Import Landsat 8 data
+var land8 = ee.ImageCollection("LANDSAT/LC08/C02/T1_TOA")
+  .filterDate('2023-04-01', '2023-10-30') // Filter by date
+  .filterBounds(study_area) // Filter by the study area
+  .filterMetadata("CLOUD_COVER", "less_than", 5) // Filter images with cloud cover < 5%
+  .mosaic() // Combine all images into one
+  .clip(study_area); // Clip the image to the study area boundary
+
+// Visualization parameters for Landsat 8 data
+var vispram = {'min': 0, 'max': 0.3, 'bands': ['B5', 'B4', 'B3']};
+Map.addLayer(land8, vispram, 'Landsat 8 Image');
+
+// Select relevant bands for classification
+var band = ["B1", "B2", "B3", "B4", "B5", "B6", "B7"];
+var land8 = land8.select(band);
+
+//// Merge ground control point (GCP) classes
+var gcp = forest.merge(agri).merge(Buildings).merge(water);
+print(gcp, 'Merged GCP');
+
+// Add a random column for splitting into training and testing datasets
+var gcp2 = gcp.randomColumn();
+
+// Use the entire dataset as training data (optional splitting not applied here)
+var training_data = gcp2;
+print('Training Data:', training_data);
+
+// Visualize the training data on the map
+Map.addLayer(training_data, {color: 'blue'}, 'Training Data');
+
+/// Create training samples by sampling regions from the image
+var training = land8.sampleRegions({
+  collection: training_data, // Training points
+  properties: ['code'], // Property containing class labels
+  scale: 30 // Scale of Landsat 8 data
+});
+print(training, 'Training Samples');
+
+/////////////////////////////// Random Forest Classification
+var class_rf = ee.Classifier.smileRandomForest({
+  numberOfTrees: 500,
+  variablesPerSplit: 5,
+  minLeafPopulation: 3,
+  bagFraction: 0.5,
+  maxNodes: 5,
+  seed: 44
+}).train({
+  features: training, // Training samples
+  classProperty: 'code', // Target property (class labels)
+  inputProperties: land8.bandNames() // Feature properties (bands)
+});
+
+// Classify the image using Random Forest
+var classified_rf = land8.classify(class_rf);
+
+// Visualization parameters for classified Random Forest result
+var visclass = {
+  max: 3, min: 1, opacity: 1,
+  palette: ["79692a", "f9ff1e", "ff3302", "4e20ff"]
+};
+Map.addLayer(classified_rf, visclass, "Random Forest Classification");
+
+/////////////////////////////// Support Vector Machine (SVM) Classification
+var class_svm = ee.Classifier.libsvm().train({
+  features: training, // Training samples
+  classProperty: 'code', // Target property (class labels)
+  inputProperties: land8.bandNames() // Feature properties (bands)
+});
+
+// Classify the image using SVM
+var classified_svm = land8.classify(class_svm);
+
+// Visualization parameters for classified SVM result
+Map.addLayer(classified_svm, visclass, "SVM Classification");
+
+//// Merge test GCP classes for evaluation
+var gcp_test = forest2.merge(agri2).merge(building2).merge(water2);
+print(gcp_test, 'Merged Test GCP');
+
+// Add a random column to test dataset
+var gcp_test2 = gcp_test.randomColumn();
+
+// Use the entire test dataset as test data
+var test_data = gcp_test;
+print('Test Data:', test_data);
+
+// Visualize the test data on the map
+Map.addLayer(test_data, {color: 'red'}, 'Test Data');
+
+// Create test samples by sampling the classified SVM image
+var test = classified_svm.sampleRegions({
+  collection: test_data, // Test points
+  properties: ['code'], // Property containing class labels
+  scale: 30 // Scale of Landsat 8 data
+});
+print(test, 'Test Samples');
+
+/// Evaluate classification performance using a confusion matrix
+var confusionmatrix = test.errorMatrix('code', 'classification');
+print('Confusion Matrix:', confusionmatrix);
+
+// Calculate Overall Accuracy
+var accuracy = confusionmatrix.accuracy();
+print("Overall Accuracy (OA):", accuracy);
+
+// Calculate Kappa Coefficient
+var kappa = confusionmatrix.kappa();
+print("Kappa Coefficient:", kappa);
