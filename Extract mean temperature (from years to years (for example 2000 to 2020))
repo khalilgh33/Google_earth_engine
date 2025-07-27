@@ -1,0 +1,64 @@
+// ==============================
+// REGION SELECTION BY POINT
+// ==============================
+var dataset = ee.FeatureCollection('FAO/GAUL/2015/level1');
+var point = geometry; // Drawn or defined point
+var roi = dataset.filterBounds(point);
+
+Map.centerObject(roi, 7);
+Map.addLayer(roi, {color: 'black'}, 'Selected Region');
+Map.addLayer(point, {color: 'red'}, 'Point');
+
+// Define the year
+var year = 2022;
+
+// Load ERA5-Land dataset
+var dataset = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
+  .filterBounds(roi)
+  .filterDate(year + '-01-01', year + '-12-31')
+  .select('temperature_2m');
+
+// Convert hourly temperature (K) to °C
+var tempC = dataset.map(function(img) {
+  return img.subtract(273.15)
+    .copyProperties(img, ['system:time_start']);
+});
+
+// Function to calculate monthly mean
+var monthlyMeans = ee.ImageCollection(
+  ee.List.sequence(1, 12).map(function(month) {
+    month = ee.Number(month);
+    var start = ee.Date.fromYMD(year, month, 1);
+    var end = start.advance(1, 'month');
+    
+    var monthlyMean = tempC
+      .filterDate(start, end)
+      .mean()
+      .set('month', month)
+      .set('system:time_start', start.millis())
+      .set('label', ee.String('MeanTemp_').cat(ee.Number(year).format()).cat('_Month_').cat(month.format('%02d')));
+    
+    return monthlyMean;
+  })
+);
+
+// Print the image collection to check
+print('Monthly mean temperature (°C)', monthlyMeans);
+
+// Export each monthly image to Google Drive
+monthlyMeans.toList(12).evaluate(function(col) {
+  col.forEach(function(feature, i) {
+    var img = ee.Image(feature.id);
+    var label = feature.properties.label;
+
+    Export.image.toDrive({
+      image: img,
+      description: label,
+      folder: 'GEE_Temperature_golestan',
+      scale: 1000,
+      region: roi.geometry().bounds(),
+      crs: 'EPSG:4326',
+      maxPixels: 1e13
+    });
+  });
+});
