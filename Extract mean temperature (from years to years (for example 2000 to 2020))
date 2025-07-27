@@ -1,64 +1,64 @@
 // ==============================
 // REGION SELECTION BY POINT
 // ==============================
-var dataset = ee.FeatureCollection('FAO/GAUL/2015/level1');
-var point = geometry; // Drawn or defined point
-var roi = dataset.filterBounds(point);
+var admin = ee.FeatureCollection('FAO/GAUL/2015/level1');
+var point = geometry; // User-defined or drawn point
+var roi = admin.filterBounds(point);
 
-Map.centerObject(roi, 7);
+// Visualize
+Map.centerObject(roi, 8);
 Map.addLayer(roi, {color: 'black'}, 'Selected Region');
 Map.addLayer(point, {color: 'red'}, 'Point');
 
-// Define the year
+// ==============================
+// DATASET AND TEMPERATURE IN °C
+// ==============================
 var year = 2022;
-
-// Load ERA5-Land dataset
-var dataset = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
+var era5 = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
   .filterBounds(roi)
   .filterDate(year + '-01-01', year + '-12-31')
   .select('temperature_2m');
 
-// Convert hourly temperature (K) to °C
-var tempC = dataset.map(function(img) {
-  return img.subtract(273.15)
-    .copyProperties(img, ['system:time_start']);
+var tempC = era5.map(function(img) {
+  return img.subtract(273.15).copyProperties(img, ['system:time_start']);
 });
 
-// Function to calculate monthly mean
-var monthlyMeans = ee.ImageCollection(
-  ee.List.sequence(1, 12).map(function(month) {
-    month = ee.Number(month);
-    var start = ee.Date.fromYMD(year, month, 1);
-    var end = start.advance(1, 'month');
-    
-    var monthlyMean = tempC
-      .filterDate(start, end)
-      .mean()
-      .set('month', month)
-      .set('system:time_start', start.millis())
-      .set('label', ee.String('MeanTemp_').cat(ee.Number(year).format()).cat('_Month_').cat(month.format('%02d')));
-    
-    return monthlyMean;
-  })
-);
+// ==============================
+// MONTHLY MEANS
+// ==============================
+var monthlyList = ee.List.sequence(1, 12).map(function(m) {
+  m = ee.Number(m);
+  var start = ee.Date.fromYMD(year, m, 1);
+  var end = start.advance(1, 'month');
+  
+  var mean = tempC.filterDate(start, end).mean()
+    .set('label', ee.String('MeanTemp_')
+        .cat(ee.Number(year).format())
+        .cat('_Month_')
+        .cat(m.format('%02d')))
+    .set('system:time_start', start.millis());
 
-// Print the image collection to check
-print('Monthly mean temperature (°C)', monthlyMeans);
+  return mean;
+});
 
-// Export each monthly image to Google Drive
-monthlyMeans.toList(12).evaluate(function(col) {
-  col.forEach(function(feature, i) {
-    var img = ee.Image(feature.id);
-    var label = feature.properties.label;
 
-    Export.image.toDrive({
-      image: img,
-      description: label,
-      folder: 'GEE_Temperature_golestan',
-      scale: 1000,
-      region: roi.geometry().bounds(),
-      crs: 'EPSG:4326',
-      maxPixels: 1e13
-    });
+var monthlyMeans = ee.ImageCollection.fromImages(monthlyList);
+print('Monthly Mean Temp (°C)', monthlyMeans);
+
+// ==============================
+// EXPORT CORRECTED
+// ==============================
+for (var i = 0; i < 12; i++) {
+  var image = ee.Image(monthlyMeans.toList(12).get(i));
+  var label = image.get('label');
+  
+  Export.image.toDrive({
+    image: image,
+    description: label.getInfo(),  // Converts ee.String to client string
+    folder: 'GEE_Temperature_golestan',
+    scale: 1000,  // Try 500 if small area
+    region: roi.geometry().bounds(),
+    crs: 'EPSG:4326',
+    maxPixels: 1e13
   });
-});
+}
