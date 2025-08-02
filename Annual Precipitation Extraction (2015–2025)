@@ -1,0 +1,72 @@
+// =======================================
+// Script: Annual Precipitation Extraction (2015–2025)
+// Dataset: ECMWF/ERA5_LAND/MONTHLY_AGGR
+// Output: Annual precipitation (mm), resampled to 500m resolution
+// Author: [Your Name]
+// =======================================
+
+// Define your Region of Interest (ROI) named 'geometry2'
+// Replace this example geometry with your actual study area
+var geometry2 = /* color: #d63000 */ee.Geometry.Polygon([
+  [[15.0, 51.0], [15.0, 50.5], [15.5, 50.5], [15.5, 51.0]]
+]);
+
+// Load the ERA5-Land monthly aggregated dataset
+var dataset = ee.ImageCollection("ECMWF/ERA5_LAND/MONTHLY_AGGR");
+
+// Select the correct precipitation band (monthly total precipitation in meters)
+var band = "total_precipitation_sum";
+
+// Create a list of years from 2015 to 2025
+var years = ee.List.sequence(2015, 2025);
+
+// Set visualization parameters for displaying on the map
+var visParams = {
+  min: 0,
+  max: 1500,
+  palette: ['white', 'skyblue', 'blue', 'darkblue']
+};
+
+// Loop through each year in the list
+years.getInfo().forEach(function(year) {
+
+  // Define start and end dates for the current year
+  var start = ee.Date.fromYMD(year, 1, 1);
+  var end = start.advance(1, 'year');
+
+  // Filter dataset for current year, sum monthly precipitation, convert to mm
+  var annualImage = dataset
+    .filterDate(start, end)
+    .select(band)
+    .sum()
+    .multiply(1000) // Convert from meters to millimeters
+    .clip(geometry2) // Clip to ROI
+    .set('year', year) // Add metadata
+    .rename('annual_precip_mm'); // Rename band
+
+  // Add annual raster to the GEE Map with visualization
+  Map.addLayer(annualImage, visParams, 'Precip ' + year);
+
+  // OPTIONAL: Resample the image to 500 meters using bilinear interpolation
+  var annualImageResampled = annualImage
+    .resample('bilinear')  // Options: 'nearest', 'bilinear', or 'bicubic'
+    .reproject({
+      crs: 'EPSG:4326',   // Output projection
+      scale: 500          // Target resolution in meters (use 250 for 250m)
+    });
+
+  // Export the resampled image to Google Drive as GeoTIFF
+  Export.image.toDrive({
+    image: annualImageResampled,         // Image to export
+    description: 'Annual_Precip_' + year, // Task name
+    folder: 'GEE_Annual_Precip',          // Drive folder name
+    fileNamePrefix: 'annual_precip_' + year, // Output file name
+    region: geometry2,                    // Export region (ROI)
+    scale: 500,                           // Resolution in meters
+    maxPixels: 1e13,                      // Large maxPixels to avoid limit errors
+    crs: 'EPSG:4326'                      // Coordinate system
+  });
+});
+
+// Center the map on the ROI for visual reference
+Map.centerObject(geometry2, 8);
