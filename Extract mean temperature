@@ -1,24 +1,35 @@
 // ==============================
 // REGION SELECTION BY POINT
 // ==============================
+
+// Load administrative boundaries (level 1 = provinces/states)
 var admin = ee.FeatureCollection('FAO/GAUL/2015/level1');
-var point = geometry; // User-defined or drawn point
+
+// Define a user-drawn or predefined point (must be defined earlier in your script or drawn manually)
+var point = geometry;  // Replace or draw this in the GEE GUI
+
+// Filter the administrative regions that intersect the selected point
 var roi = admin.filterBounds(point);
 
-// Visualize
-Map.centerObject(roi, 8);
-Map.addLayer(roi, {color: 'black'}, 'Selected Region');
-Map.addLayer(point, {color: 'red'}, 'Point');
+// Visualize the selected region and point on the map
+Map.centerObject(roi, 8);  // Zoom to the region
+Map.addLayer(roi, {color: 'black'}, 'Selected Region');  // Region boundary
+Map.addLayer(point, {color: 'red'}, 'Point');  // Selected point
 
 // ==============================
 // DATASET AND TEMPERATURE IN °C
 // ==============================
+
+// Define year of interest
 var year = 2022;
+
+// Load ERA5 hourly temperature data (in Kelvin) for the selected region and year
 var era5 = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY")
   .filterBounds(roi)
   .filterDate(year + '-01-01', year + '-12-31')
-  .select('temperature_2m');
+  .select('temperature_2m');  // Select 2-meter air temperature band
 
+// Convert temperature from Kelvin to Celsius and retain timestamp metadata
 var tempC = era5.map(function(img) {
   return img.subtract(273.15).copyProperties(img, ['system:time_start']);
 });
@@ -26,39 +37,46 @@ var tempC = era5.map(function(img) {
 // ==============================
 // MONTHLY MEANS
 // ==============================
+
+// Generate a list of monthly mean temperature images
 var monthlyList = ee.List.sequence(1, 12).map(function(m) {
-  m = ee.Number(m);
+  m = ee.Number(m);  // Cast to number
+
   var start = ee.Date.fromYMD(year, m, 1);
   var end = start.advance(1, 'month');
-  
+
+  // Calculate monthly mean temperature
   var mean = tempC.filterDate(start, end).mean()
-    .set('label', ee.String('MeanTemp_')
+    .set('label', ee.String('MeanTemp_')     // Set a human-readable label
         .cat(ee.Number(year).format())
         .cat('_Month_')
         .cat(m.format('%02d')))
-    .set('system:time_start', start.millis());
+    .set('system:time_start', start.millis());  // Add timestamp
 
   return mean;
 });
 
-
+// Convert list to ImageCollection
 var monthlyMeans = ee.ImageCollection.fromImages(monthlyList);
 print('Monthly Mean Temp (°C)', monthlyMeans);
 
 // ==============================
 // EXPORT CORRECTED
 // ==============================
+
+// Loop through each monthly image (12 months)
 for (var i = 0; i < 12; i++) {
-  var image = ee.Image(monthlyMeans.toList(12).get(i));
-  var label = image.get('label');
+  var image = ee.Image(monthlyMeans.toList(12).get(i));  // Get image by index
+  var label = image.get('label');  // Get label from metadata
   
+  // Export each image to Google Drive with a descriptive name
   Export.image.toDrive({
-    image: image,
-    description: label.getInfo(),  // Converts ee.String to client string
-    folder: 'GEE_Temperature_golestan',
-    scale: 1000,  // Try 500 if small area
-    region: roi.geometry().bounds(),
-    crs: 'EPSG:4326',
-    maxPixels: 1e13
+    image: image,                           // Image to export
+    description: label.getInfo(),           // Convert ee.String to client-side string
+    folder: 'GEE_Temperature_golestan',     // Google Drive folder name
+    scale: 1000,                            // Spatial resolution (try 500 if you need finer)
+    region: roi.geometry().bounds(),        // Export region based on filtered admin unit
+    crs: 'EPSG:4326',                       // Output projection
+    maxPixels: 1e13                         // Allow for large exports
   });
 }
